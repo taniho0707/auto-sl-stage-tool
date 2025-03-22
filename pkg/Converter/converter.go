@@ -22,10 +22,6 @@ func ConvertToCommands(leftHand []ScoreSingleHand.Note, rightHand []ScoreSingleH
 	rightCommands := generateHandCommands(rightHand, CommandArm.Right, bpm, offset)
 	right = append(right, rightCommands...)
 
-	// 時間順にソート
-	sortCommands(left)
-	sortCommands(right)
-
 	return left, right, nil
 }
 
@@ -33,8 +29,8 @@ func ConvertToCommands(leftHand []ScoreSingleHand.Note, rightHand []ScoreSingleH
 func generateHandCommands(notes []ScoreSingleHand.Note, hand CommandArm.Hand, bpm float64, offset int) []CommandArm.Command {
 	commands := []CommandArm.Command{}
 
-	// 1拍あたりの時間（ミリ秒）
-	beatTimeMs := 60000.0 / bpm
+	// 1小節あたりの時間（ミリ秒）
+	measureTimeMs := 60000.0 * 4.0 / bpm
 
 	for i, note := range notes {
 		isFirstNote := i == 0
@@ -42,7 +38,8 @@ func generateHandCommands(notes []ScoreSingleHand.Note, hand CommandArm.Hand, bp
 
 		// ノートの時間（ミリ秒）を計算
 		// 小節数 * 拍子 + 拍数 で全体の拍数を計算し、それに1拍の時間をかける
-		timeMs := int((float64(note.Measure*note.BeatSet+note.Beat) * beatTimeMs)) + offset
+		timeMs := int(measureTimeMs*float64(note.Measure)+measureTimeMs*float64(note.Beat)/float64(note.BeatSet)) + offset
+		// timeMs := int((float64(note.Measure*note.BeatSet+note.Beat) * beatTimeMs)) + offset
 
 		// TargetPos から Lane を決定
 		lane := convertTargetPosToLane(note.TargetPos)
@@ -70,7 +67,7 @@ func generateHandCommands(notes []ScoreSingleHand.Note, hand CommandArm.Hand, bp
 		}
 
 		// 本番移動・プッシュ・リリース
-		if lastNote != nil && lastNote.Note == ScoreDeleste.LongStart {
+		if lastNote != nil && lastNote.Note != ScoreDeleste.None && lastNote.Note == ScoreDeleste.LongStart {
 			if currentNote.Note == ScoreDeleste.Tap {
 				releaseCmd := CommandArm.NewCommandSolenoid(timeMs, hand, false)
 				commands = append(commands, releaseCmd)
@@ -82,6 +79,14 @@ func generateHandCommands(notes []ScoreSingleHand.Note, hand CommandArm.Hand, bp
 				commands = append(commands, moveCmd)
 			}
 		} else {
+			if (lastNote != nil && lastNote.Note == ScoreDeleste.Tap) || (lastNote == nil || lastNote.Note == ScoreDeleste.None) {
+				if currentNote.Note == ScoreDeleste.LeftFlick || currentNote.Note == ScoreDeleste.RightFlick {
+					if nextNote != nil && (nextNote.Note == ScoreDeleste.LeftFlick || nextNote.Note == ScoreDeleste.RightFlick) {
+						releaseCmd := CommandArm.NewCommandSolenoid(timeMs, hand, true)
+						commands = append(commands, releaseCmd)
+					}
+				}
+			}
 			if currentNote.Note == ScoreDeleste.Tap || currentNote.Note == ScoreDeleste.LongStart {
 				pressCmd := CommandArm.NewCommandSolenoid(timeMs, hand, true)
 				commands = append(commands, pressCmd)
@@ -96,6 +101,16 @@ func generateHandCommands(notes []ScoreSingleHand.Note, hand CommandArm.Hand, bp
 
 		// 後段
 		if currentNote.Note == ScoreDeleste.Tap || currentNote.Note == ScoreDeleste.LeftFlick || currentNote.Note == ScoreDeleste.RightFlick {
+			// リリース
+			if nextNote != nil && nextNote.Note != ScoreDeleste.None && (nextNote.Note == ScoreDeleste.LeftFlick || nextNote.Note == ScoreDeleste.RightFlick) {
+				// なにもしない
+			} else if lastNote != nil && lastNote.Note != ScoreDeleste.None && lastNote.Note == ScoreDeleste.LongStart && currentNote.Note == ScoreDeleste.Tap {
+				// なにもしない
+			} else {
+				releaseCmd := CommandArm.NewCommandSolenoid(timeMs+10, hand, false)
+				commands = append(commands, releaseCmd)
+			}
+
 			// 移動
 			if nextNote == nil || nextNote.Note == ScoreDeleste.None {
 				var side CommandArm.Lane
@@ -109,14 +124,6 @@ func generateHandCommands(notes []ScoreSingleHand.Note, hand CommandArm.Hand, bp
 			} else {
 				moveCmd := CommandArm.NewCommandMove(timeMs+10, hand, convertTargetPosToLane(nextNote.TargetPos), 0)
 				commands = append(commands, moveCmd)
-			}
-
-			// リリース
-			if nextNote != nil && nextNote.Note != ScoreDeleste.None && (nextNote.Note == ScoreDeleste.LeftFlick || nextNote.Note == ScoreDeleste.RightFlick) {
-				// なにもしない
-			} else {
-				releaseCmd := CommandArm.NewCommandSolenoid(timeMs+10, hand, false)
-				commands = append(commands, releaseCmd)
 			}
 		}
 	}
@@ -141,12 +148,4 @@ func convertTargetPosToLane(targetPos int) CommandArm.Lane {
 	default:
 		return CommandArm.RightEdge
 	}
-}
-
-// sortCommands はコマンドを時間順にソートします
-func sortCommands(commands []CommandArm.Command) {
-	// 時間でソートするロジックを実装
-	// 例: sort.Slice(commands, func(i, j int) bool {
-	//     return commands[i].TimeMs() < commands[j].TimeMs()
-	// })
 }
